@@ -1,4 +1,5 @@
-name: Build Android APK
+
+name: Build Voice Lock APK
 
 on:
   push:
@@ -10,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Set up JDK 17
@@ -21,12 +22,376 @@ jobs:
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
-
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug --stacktrace
-
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
       with:
-        name: VoiceLock-APK
-        path: app/build/outputs/apk/debug/app-debug.apk
+        gradle-version: '8.6'
+
+    - name: Auto-Generate Android Project Files
+      run: |
+        mkdir -p app/src/main/java/com/example/voicelock
+        mkdir -p app/src/main/res/layout
+        mkdir -p app/src/main/res/drawable
+        mkdir -p app/src/main/res/values
+
+        # 1. settings.gradle.kts
+        cat << 'EOF' > settings.gradle.kts
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "VoiceLock"
+        include(":app")
+        EOF
+
+        # 2. build.gradle.kts (Root)
+        cat << 'EOF' > build.gradle.kts
+        plugins {
+            id("com.android.application") version "8.3.2" apply false
+            id("org.jetbrains.kotlin.android") version "1.9.23" apply false
+        }
+        EOF
+
+        # 3. app/build.gradle.kts
+        cat << 'EOF' > app/build.gradle.kts
+        plugins {
+            id("com.android.application")
+            id("org.jetbrains.kotlin.android")
+        }
+        android {
+            namespace = "com.example.voicelock"
+            compileSdk = 34
+            defaultConfig {
+                applicationId = "com.example.voicelock"
+                minSdk = 26
+                targetSdk = 34
+                versionCode = 1
+                versionName = "1.0"
+            }
+            buildFeatures {
+                viewBinding = true
+            }
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            kotlinOptions {
+                jvmTarget = "17"
+            }
+        }
+        dependencies {
+            implementation("androidx.core:core-ktx:1.12.0")
+            implementation("androidx.appcompat:appcompat:1.6.1")
+            implementation("com.google.android.material:material:1.11.0")
+            implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+        }
+        EOF
+
+        # 4. AndroidManifest.xml
+        cat << 'EOF' > app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.RECORD_AUDIO" />
+            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+            <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+            <application
+                android:allowBackup="true"
+                android:icon="@android:drawable/ic_btn_speak_now"
+                android:label="Voice Lock"
+                android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+                <activity android:name=".PermissionsActivity" android:exported="false" />
+                <activity android:name=".VoiceTrainingActivity" android:exported="false" />
+                <activity
+                    android:name=".LockScreenActivity"
+                    android:excludeFromRecents="true"
+                    android:launchMode="singleTask"
+                    android:showOnLockScreen="true"
+                    android:exported="false" />
+                <service
+                    android:name=".LockService"
+                    android:foregroundServiceType="specialUse"
+                    android:exported="false">
+                    <property
+                        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                        android:value="Voice lock screen" />
+                </service>
+            </application>
+        </manifest>
+        EOF
+
+        # 5. Resources (Colors & Drawables)
+        cat << 'EOF' > app/src/main/res/values/colors.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <color name="purple_dark">#120326</color>
+            <color name="purple_primary">#6200EE</color>
+            <color name="purple_accent">#BB86FC</color>
+            <color name="white">#FFFFFF</color>
+            <color name="card_bg">#251142</color>
+        </resources>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/drawable/bg_purple_gradient.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android">
+            <gradient
+                android:startColor="#2A085C"
+                android:endColor="#0F031D"
+                android:angle="270" />
+        </shape>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/drawable/rounded_button.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android">
+            <gradient
+                android:startColor="#7C4DFF"
+                android:endColor="#6200EE"
+                android:angle="45"/>
+            <corners android:radius="28dp" />
+        </shape>
+        EOF
+
+        # 6. Layout Files
+        cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_purple_gradient"
+            android:orientation="vertical"
+            android:padding="24dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="32dp"
+                android:text="Voice Lock &amp; Unlock"
+                android:textColor="@color/white"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Registered Keyphrase: [Not Set]"
+                android:textColor="@color/purple_accent"
+                android:textSize="14sp" />
+            <View android:layout_width="match_parent" android:layout_height="32dp" />
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardVoiceLock"
+                android:layout_width="match_parent"
+                android:layout_height="100dp"
+                android:clickable="true"
+                app:cardBackgroundColor="@color/card_bg"
+                app:cardCornerRadius="16dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:padding="16dp">
+                    <ImageView
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:src="@android:drawable/ic_btn_speak_now" />
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Voice Lock (ভয়েস লক)"
+                            android:textColor="@color/white"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Set your secret voice password"
+                            android:textColor="@color/purple_accent"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                app:cardBackgroundColor="@color/card_bg"
+                app:cardCornerRadius="16dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:padding="16dp">
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Voice Unlock (ভয়েস আনলক)"
+                            android:textColor="@color/white"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Enable background screen lock"
+                            android:textColor="@color/purple_accent"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchLockService"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/layout/activity_permissions.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_purple_gradient"
+            android:orientation="vertical"
+            android:padding="24dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="40dp"
+                android:text="Permissions Needed"
+                android:textColor="@color/white"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Grant Overlay and Microphone permission to activate screen lock."
+                android:textColor="@color/purple_accent"
+                android:textSize="14sp" />
+            <Button
+                android:id="@+id/btnOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="40dp"
+                android:background="@drawable/rounded_button"
+                android:text="1. Grant Overlay Permission"
+                android:textColor="@color/white" />
+            <Button
+                android:id="@+id/btnMic"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/rounded_button"
+                android:text="2. Grant Audio Permission"
+                android:textColor="@color/white" />
+            <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+            <Button
+                android:id="@+id/btnContinue"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:background="@drawable/rounded_button"
+                android:text="Continue"
+                android:textColor="@color/white" />
+        </LinearLayout>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/layout/activity_voice_training.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_purple_gradient"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Record Voice Password"
+                android:textColor="@color/white"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+            <ImageView
+                android:id="@+id/btnMicRecord"
+                android:layout_width="100dp"
+                android:layout_height="100dp"
+                android:layout_marginTop="40dp"
+                android:background="@drawable/rounded_button"
+                android:padding="24dp"
+                android:src="@android:drawable/ic_btn_speak_now" />
+            <TextView
+                android:id="@+id/tvCaptured"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="Tap mic and speak phrase"
+                android:textColor="@color/white"
+                android:textSize="16sp" />
+            <Button
+                android:id="@+id/btnSave"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="40dp"
+                android:background="@drawable/rounded_button"
+                android:enabled="false"
+                android:text="Save Keyphrase"
+                android:textColor="@color/white" />
+        </LinearLayout>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/layout/activity_lock_screen.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_purple_gradient"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+            <TextView
+                android:id="@+id/tvTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Locked"
+                android:textColor="@color/white"
+                android:textSize="36sp"
+                android:textStyle="bold" />
+            <ImageView
+                android:id="@+id/btnUnlockMic"
+                android:layout_width="110dp"
+                android:layout_height="110dp"
+                android:layout_marginTop="50dp"
+                android:background="@drawable/rounded_button"
+                android:padding="24dp"
+                android:src="@android:drawable/ic_btn_speak_now" />
+            <TextView
+                a
